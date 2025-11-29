@@ -1,93 +1,80 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# github_auth_bootstrap_01.sh
-#
-# Purpose:
-#   - Decrypt an SSH key encrypted with GPG (symmetric) and install it as ~/.ssh/id_ed25519
-#   - Optionally configure global git user.name / user.email
-#
-# Expects:
-#   - initial_github.key.gpg in the same directory as this script
-#   - Debian-based system, sudo available
-
-# Colors (Tokyodark-ish)
-RESET='\033[0m'
-FG_PURPLE='\033[38;2;169;177;214m'
-FG_GREEN='\033[38;2;152;195;121m'
-FG_YELLOW='\033[38;2;224;175;104m'
-FG_RED='\033[38;2;224;108;117m'
-FG_GREY='\033[38;2;92;99;112m'
-
-info()  { printf "${FG_PURPLE}[*]${RESET} %s\n" "$1"; }
-ok()    { printf "${FG_GREEN}[✓]${RESET} %s\n" "$1"; }
-warn()  { printf "${FG_YELLOW}[!]${RESET} %s\n" "$1"; }
-error() { printf "${FG_RED}[✗]${RESET} %s\n" "$1"; }
-note()  { printf "${FG_GREY}[-] %s${RESET}\n" "$1"; }
-
-BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENCRYPTED_KEY="$BOOTSTRAP_DIR/initial_github.key.gpg"
+ENCRYPTED_KEY_FILE="initial_github.key.gpg"
 SSH_DIR="$HOME/.ssh"
 SSH_KEY_PATH="$SSH_DIR/id_ed25519"
+SSH_KEY_PUB_PATH="$SSH_DIR/id_ed25519.pub"
 
-info "Setting up GitHub SSH key from encrypted file..."
+echo "[github_auth_bootstrap_01] Starting GitHub SSH setup..."
 
+# Ensure required packages are installed (Debian)
 if ! command -v gpg >/dev/null 2>&1; then
-    info "gpg not found, installing (requires sudo)..."
-    sudo apt update
-    sudo apt install -y gnupg
-    ok "gpg installed."
-else
-    note "gpg already installed."
+	echo "[github_auth_bootstrap_01] Installing gnupg..."
+	sudo apt-get update
+	sudo apt-get install -y gnupg
 fi
 
-if [ ! -f "$ENCRYPTED_KEY" ]; then
-    error "Encrypted key not found at: $ENCRYPTED_KEY"
-    echo "    Expected file: initial_github.key.gpg next to this script."
-    exit 1
+if ! command -v ssh >/dev/null 2>&1; then
+	echo "[github_auth_bootstrap_01] Installing OpenSSH client..."
+	sudo apt-get update
+	sudo apt-get install -y openssh-client
 fi
 
+# Check encrypted key exists
+if [ ! -f "$ENCRYPTED_KEY_FILE" ]; then
+	echo "[github_auth_bootstrap_01] ERROR: $ENCRYPTED_KEY_FILE not found in $(pwd)"
+	echo "Make sure you've cloned the bootstrap repo correctly."
+	exit 1
+fi
+
+# Prepare ~/.ssh
 mkdir -p "$SSH_DIR"
 chmod 700 "$SSH_DIR"
 
+# If a key already exists, ask before overwriting
 if [ -f "$SSH_KEY_PATH" ]; then
-    warn "$SSH_KEY_PATH already exists."
-    read -rp "$(printf "${FG_YELLOW}    Overwrite existing SSH key? [y/N] ${RESET}")" ans
-    case "$ans" in
-        y|Y) info "Overwriting existing SSH key...";;
-        *) note "Aborting to avoid overwriting existing key."; exit 1;;
-    esac
+	read -r -p "[github_auth_bootstrap_01] $SSH_KEY_PATH already exists. Overwrite? [y/N] " answer
+	case "$answer" in
+	[Yy]*) echo "Overwriting existing key..." ;;
+	*)
+		echo "Aborting."
+		exit 1
+		;;
+	esac
 fi
 
-info "Decrypting SSH key to $SSH_KEY_PATH (you'll be prompted for passphrase)..."
-gpg --decrypt "$ENCRYPTED_KEY" > "$SSH_KEY_PATH"
+echo "[github_auth_bootstrap_01] Decrypting SSH key to $SSH_KEY_PATH..."
+gpg --output "$SSH_KEY_PATH" --decrypt "$ENCRYPTED_KEY_FILE"
 chmod 600 "$SSH_KEY_PATH"
-ok "SSH private key written to $SSH_KEY_PATH."
 
-if [ ! -f "$SSH_KEY_PATH.pub" ]; then
-    if ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null 2>&1; then
-        info "Generating public key from private key..."
-        ssh-keygen -y -f "$SSH_KEY_PATH" > "$SSH_KEY_PATH.pub"
-        ok "Public key written to $SSH_KEY_PATH.pub"
-    else
-        warn "Could not automatically generate public key with ssh-keygen."
-    fi
-else
-    note "Public key already exists at $SSH_KEY_PATH.pub"
+# Generate public key from private, if missing
+if [ ! -f "$SSH_KEY_PUB_PATH" ]; then
+	echo "[github_auth_bootstrap_01] Generating public key $SSH_KEY_PUB_PATH..."
+	ssh-keygen -y -f "$SSH_KEY_PATH" >"$SSH_KEY_PUB_PATH"
+	chmod 644 "$SSH_KEY_PUB_PATH"
 fi
 
-warn "Make sure this public key is added to your GitHub account (if not already)."
+echo "[github_auth_bootstrap_01] SSH key installed."
 
-read -rp "$(printf "${FG_PURPLE}[?] Configure global git user.name and user.email now? [y/N] ${RESET}")" cfg_ans
-if [[ "$cfg_ans" == "y" || "$cfg_ans" == "Y" ]]; then
-    read -rp "  - git user.name: " git_user
-    read -rp "  - git user.email: " git_email
-
-    git config --global user.name "$git_user"
-    git config --global user.email "$git_email"
-    ok "Global git user.name and user.email configured."
-else
-    note "Skipping git user config."
+# Optional: basic git config (only if not set)
+if ! git config --global user.name >/dev/null 2>&1; then
+	read -r -p "Set git user.name for this machine? [y/N] " set_name
+	if [[ "$set_name" =~ ^[Yy]$ ]]; then
+		read -r -p "Enter git user.name: " git_name
+		git config --global user.name "$git_name"
+	fi
 fi
 
-ok "GitHub SSH setup complete. You should now be able to use git@github.com:... URLs from this machine."
+if ! git config --global user.email >/dev/null 2>&1; then
+	read -r -p "Set git user.email for this machine? [y/N] " set_email
+	if [[ "$set_email" =~ ^[Yy]$ ]]; then
+		read -r -p "Enter git user.email: " git_email
+		git config --global user.email "$git_email"
+	fi
+fi
+
+echo "[github_auth_bootstrap_01] Testing SSH connection to GitHub..."
+ssh -T git@github.com || true
+
+echo "[github_auth_bootstrap_01] Done."
