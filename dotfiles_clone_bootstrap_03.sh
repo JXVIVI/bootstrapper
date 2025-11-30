@@ -48,9 +48,7 @@ if [ -d "$DOTFILES_DIR/.git" ]; then
 fi
 
 if [ ! -d "$DOTFILES_DIR" ]; then
-	if [ "$DOTFILES_REPO_SSH_URL" = "git@github.com:YOUR_USERNAME/YOUR_DOTFILES_REPO.git" ]; then
-		warn "DOTFILES_REPO_SSH_URL is still the placeholder."
-		error "Edit dotfiles_clone_bootstrap_03.sh and set your actual dotfiles repo SSH URL."
+	if [ "$DOTFILES_REPO_SSH_URL" = "git@github.com:JXVIVI/dotfiles.git" ]; then
 		exit 1
 	fi
 
